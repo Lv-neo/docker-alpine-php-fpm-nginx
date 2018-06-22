@@ -1,6 +1,6 @@
 # 基于alpine的php-fpm nginx环境
 
-* php 7.2
+* php 7.1.17
 * php module
  * mongodb 1.4.3
  * redis 4.0.2
@@ -9,6 +9,7 @@
  * opcache
  * mysqli
 * nginx 1.14
+* alpine 3.4
 
 ## base镜像配置
 * nginx
@@ -39,11 +40,11 @@ docker-php-ext-install -j $(nproc) pdo_mysql opcache mysqli
 ```
 
 ## php
-### php.ini
+### ~~php.ini~~
 ```
 COPY php/php.ini /usr/local/etc/php/
 ```
-### php-fpm
+### ~~php-fpm~~
 ```
 COPY php/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
 ```
@@ -76,3 +77,5 @@ COPY nginx/fastcgi_params  /usr/local/nginx/conf/fastcgi_params
 
 ## unix core 
 未完待续
+
+

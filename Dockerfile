@@ -1,4 +1,4 @@
-FROM php:7.2-fpm-alpine3.7
+FROM php:7.1.17-fpm-alpine3.4
 MAINTAINER neo<neo.shilong.xu@gmail.com>
 
 ENV TZ=Asia/Shanghai
@@ -7,7 +7,9 @@ ENV MONGODB_VERSION 1.4.3
 ENV REDIS_VERSION 4.0.2
 ENV YACONF_VERSION 1.0.7
 
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+COPY php/ext /usr/local/src/
+COPY run.sh /run.sh
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
 #https://github.com/nginxinc/docker-nginx/blob/d377983a14b214fcae4b8e34357761282aca788f/stable/alpine/Dockerfile
 RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
@@ -72,7 +74,6 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 		gd-dev \
 		geoip-dev \
 		g++ \
-		g++ \
 		autoconf \
 	&& curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz -o nginx.tar.gz \
 	&& curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz.asc  -o nginx.tar.gz.asc \
@@ -84,7 +85,7 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 		hkp://p80.pool.sks-keyservers.net:80 \
 		pgp.mit.edu \
 	; do \
-		echo "Fetching GPG key $GPG_KEYS from $server"; \
+		#echo "Fetching GPG key $GPG_KEYS from $server"; \
 		gpg --keyserver "$server" --keyserver-options timeout=10 --recv-keys "$GPG_KEYS" && found=yes && break; \
 	done; \
 	test -z "$found" && echo >&2 "error: failed to fetch GPG key $GPG_KEYS" && exit 1; \
@@ -140,50 +141,9 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 	# Bring in tzdata so users could set the timezones through the environment
 	# variables
 	&& apk add --no-cache tzdata \
-	\
-	# forward request and error logs to docker log collector
-	&& ln -sf /dev/stdout /var/log/nginx/access.log \
-	&& ln -sf /dev/stderr /var/log/nginx/error.log
-
-#php ext install 
-COPY php/ext /usr/local/src/
-#RUN apk add --no-cache --virtual .build-deps \
-#    g++\
-#    autoconf \
-#	 && docker-php-ext-install -j $(nproc) pdo_mysql opcache mysqli \
-#    && ( \
-#		apk add \
-#			--no-cache \
-#			freetype \
-#			libpng \
-#			libjpeg-turbo \
-#			freetype-dev \
-#			libpng-dev \
-#			libjpeg-turbo-dev\
-#		&& docker-php-ext-configure gd \
-#			--with-gd \
-#			--with-freetype-dir=/usr/include/ \
-#			--with-png-dir=/usr/include/ \
-#			--with-jpeg-dir=/usr/include/ \
-#		&& docker-php-ext-install gd \
-#		&& apk del \
-#			--no-cache \
-#			freetype-dev \
-#			libpng-dev \
-#			libjpeg-turbo-dev \
-#	) \
-#    && ( \
-#		apk add \
-#			--no-cache \
-#			libmcrypt-dev \
-#		&& docker-php-ext-configure mcrypt \
-#			--with-mcrypt \
-#		&& docker-php-ext-install  mcrypt \
-#		&& apk del \
-#		libmcrypt-dev \
-#	) \
-
-RUN docker-php-ext-install -j $(nproc) pdo_mysql opcache mysqli \
+	# install php core ext by docker-php-ext-install
+    && docker-php-ext-install -j$(getconf _NPROCESSORS_ONLN) pdo_mysql opcache mysqli \
+    # install php pecl ext by file
     && ( \
        cd /usr/local/src \
        && tar -zxvf mongodb-$MONGODB_VERSION.tgz  \
@@ -191,7 +151,7 @@ RUN docker-php-ext-install -j $(nproc) pdo_mysql opcache mysqli \
        && cd mongodb-$MONGODB_VERSION \
        && phpize \
        && ./configure \
-       && make -j$(nproc) \
+       && make -j$(getconf _NPROCESSORS_ONLN) \
        && make install \
     ) \
     && docker-php-ext-enable mongodb \
@@ -202,7 +162,7 @@ RUN docker-php-ext-install -j $(nproc) pdo_mysql opcache mysqli \
        && cd yaconf-$YACONF_VERSION \
        && phpize \
        && ./configure \
-       && make -j$(nproc) \
+       && make -j$(getconf _NPROCESSORS_ONLN) \
        && make install \
     ) \
     && docker-php-ext-enable yaconf \
@@ -213,28 +173,31 @@ RUN docker-php-ext-install -j $(nproc) pdo_mysql opcache mysqli \
        && cd redis-$REDIS_VERSION \
        && phpize \
        && ./configure \
-       && make -j$(nproc) \
+       && make -j$(getconf _NPROCESSORS_ONLN) \
        && make install \
     ) \
     && docker-php-ext-enable redis \
     && docker-php-source delete \
-    && apk del .build-deps 
+    && apk del .build-deps \
+    # set timezone
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    # forward request and error logs to docker log collector
+	#&& ln -sf /dev/stdout /var/log/nginx/error_nginx.log \
+	#&& ln -sf /dev/stderr /var/log/nginx/nginx_access.log \
+	&& mkdir -p /var/log/php && chmod 0777 -R /var/log && chmod a+x /run.sh
 
-#php nginx config
-COPY php/php.ini /usr/local/etc/php/
-COPY php/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
-COPY nginx/nginx.conf      /etc/nginx/nginx.conf
-COPY nginx/fastcgi_params  /usr/local/nginx/conf/fastcgi_params
-COPY start.sh /sh/start.sh
-RUN chmod 0777 /sh \
-    && mkdir -p /var/log/php/ 
+# In k8s, you can put the following configuration file(（php.ini,php-fpm.conf,nginx-conf）) in PVC allows you to quickly modify the container in PHP and nginx configuration
+# 在k8s中，你可以将以下配置文件放到pvc中让你可以快速的修改容器的php和nginx配置（php.ini,php-fpm.conf,nginx-conf）
+#COPY php/php.ini /usr/local/etc/php/
+#COPY php/php-fpm.conf /usr/local/etc/php-fpm.conf
 
-#for test
+# Test domain, echo phpinfo
 #COPY test/index.php /www/test/
-#COPY test/test.com.conf /etc/nginx/vhosts/
+#COPY test/nginx.conf /etc/nginx/nginx.conf
+#COPY test/conf.d/ /etc/nginx/conf.d
 
 #ports
 EXPOSE 80
 EXPOSE 9000
-ENTRYPOINT ["/sh/start.sh"]
-CMD ["/bin/sh"]
+ENTRYPOINT ["/run.sh"]
+CMD ["/bin/sh","-c"]
